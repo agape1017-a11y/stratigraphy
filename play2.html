@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>可愛動物疊疊樂 🦁</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #F0FDF4;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
+            padding-top: 15px;
+            box-sizing: border-box;
+        }
+
+        #game-container {
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        #hint-text {
+            font-size: 22px;
+            color: #1E293B;
+            font-weight: bold;
+            margin-bottom: 12px;
+            min-height: 60px;
+            line-height: 1.4;
+            padding: 0 15px;
+        }
+
+        /* 積木塔外殼 */
+        #tower {
+            background: #FFFFFF;
+            border-radius: 20px;
+            padding: 15px 15px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+            width: 290px;
+            margin: 0 auto;
+            border-bottom: 15px solid #D97706; /* 咖啡色地板 */
+        }
+
+        /* 每一層積木 */
+        .row {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 5px; 
+        }
+
+        /* 單個積木按鈕 - 稍微縮短一點高度以適應 9 層的高度 */
+        .block {
+            flex: 1;
+            height: 45px;
+            border: 2px solid #FFFFFF;
+            border-radius: 8px;
+            font-size: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: inset 0 -4px 0 rgba(0,0,0,0.1);
+            margin: 0 3px; 
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 被抽走的積木隱形 */
+        .block.removed {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        /* 控制區 */
+        #control-panel {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 0 20px;
+        }
+
+        .btn {
+            background: #4ADE80;
+            color: white;
+            border: none;
+            padding: 12px 26px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(74, 222, 128, 0.4);
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #dice-box {
+            width: 70px;
+            height: 70px;
+            background: #FFF;
+            border: 4px solid #FBBF24;
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .rolling {
+            animation: roll 0.2s infinite linear;
+        }
+
+        @keyframes roll {
+            0% { transform: rotate(0deg) scale(1.1); }
+            100% { transform: rotate(360deg) scale(1.1); }
+        }
+
+        /* 結束彈窗 */
+        #game-over-mask {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6);
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .alert-box {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            width: 80%;
+            max-width: 300px;
+        }
+
+        .alert-box h2 { margin: 0 0 10px 0; color: #EF4444; font-size: 28px; }
+        .alert-box p { margin: 0 0 20px 0; color: #475569; font-size: 20px; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="hint-text">按右下角的 🎲 骰子開始玩喔！</div>
+    
+    <div id="tower"></div>
+    
+    <div id="control-panel">
+        <button class="btn" onclick="resetGame()">重新玩 🔄</button>
+        <div id="dice-box" onclick="rollDice()">🎲</div>
+    </div>
+</div>
+
+<div id="game-over-mask" onclick="resetGame()">
+    <div class="alert-box">
+        <h2>哇！倒下來了！💥</h2>
+        <p>沒關係，我們再玩一次！❤️</p>
+        <button class="btn" style="background:#FBBF24;">再玩一次 🔄</button>
+    </div>
+</div>
+
+<script>
+    var hintText = document.getElementById('hint-text');
+    var diceBox = document.getElementById('dice-box');
+    var tower = document.getElementById('tower');
+    var gameOverMask = document.getElementById('game-over-mask');
+
+    var ANIMALS = [
+        { id: 0, name: '小獅子', emoji: '🦁', color: '#FDBA74' },
+        { id: 1, name: '小青蛙', emoji: '🐸', color: '#86EFAC' },
+        { id: 2, name: '小兔子', emoji: '🐰', color: '#F9A8D4' },
+        { id: 3, name: '小鴨子', emoji: '🐥', color: '#FDE047' }
+    ];
+
+    var blocksData = [];
+    var currentTargetAnimal = null;
+    var isRolling = false;
+    var gameOver = false;
+
+    function resetGame() {
+        gameOver = false;
+        currentTargetAnimal = null;
+        isRolling = false;
+        blocksData = [];
+        
+        diceBox.innerText = '🎲';
+        hintText.innerText = '按右下角的 🎲 骰子開始玩喔！';
+        gameOverMask.style.display = 'none';
+        tower.innerHTML = ''; 
+        
+        // 修改這裡：從原來的 6 層增加到 9 層
+        var rows = 9;
+        var animalIndex = 0;
+
+        for (var r = rows - 1; r >= 0; r--) {
+            var rowDiv = document.createElement('div');
+            rowDiv.className = 'row';
+            
+            blocksData[r] = [];
+
+            for (var c = 0; c < 3; c++) {
+                var anim = ANIMALS[animalIndex % ANIMALS.length];
+                animalIndex++;
+
+                var blockBtn = document.createElement('div');
+                blockBtn.className = 'block';
+                blockBtn.style.backgroundColor = anim.color;
+                blockBtn.innerText = anim.emoji;
+                
+                var blockObject = {
+                    element: blockBtn,
+                    animal: anim,
+                    isRemoved: false,
+                    row: r
+                };
+                
+                blocksData[r].push(blockObject);
+
+                (function(targetBlock) {
+                    blockBtn.addEventListener('click', function() {
+                        handleBlockClick(targetBlock);
+                    });
+                })(blockObject);
+
+                rowDiv.appendChild(blockBtn);
+            }
+            tower.appendChild(rowDiv);
+        }
+    }
+
+    function rollDice() {
+        if (isRolling || gameOver) return;
+        
+        isRolling = true;
+        diceBox.className = 'rolling';
+        hintText.innerText = '小動物轉圈圈中...';
+
+        var count = 0;
+        var interval = setInterval(function() {
+            var randomAnim = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+            diceBox.innerText = randomAnim.emoji;
+            count++;
+            
+            if (count > 8) {
+                clearInterval(interval);
+                diceBox.className = '';
+                
+                currentTargetAnimal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+                diceBox.innerText = currentTargetAnimal.emoji;
+                hintText.innerText = '請找出【' + currentTargetAnimal.emoji + ' ' + currentTargetAnimal.name + '】點一下！';
+                isRolling = false;
+            }
+        }, 100);
+    }
+
+    function handleBlockClick(block) {
+        if (gameOver || isRolling || !currentTargetAnimal || block.isRemoved) return;
+
+        if (block.animal.id === currentTargetAnimal.id) {
+            block.isRemoved = true;
+            block.element.className = 'block removed';
+            
+            if (checkIfTowerFalls(block)) {
+                gameOver = true;
+                gameOverMask.style.display = 'flex';
+            } else {
+                hintText.innerText = '太棒了！答對了！再擲一次骰子吧 ✨';
+                currentTargetAnimal = null;
+            }
+        } else {
+            hintText.innerText = '不對喔，那是' + block.animal.name + '。請找 ' + currentTargetAnimal.emoji + ' ' + currentTargetAnimal.name + '！';
+        }
+    }
+
+    function checkIfTowerFalls(removedBlock) {
+        var remainingCount = 0;
+        var currentRowBlocks = blocksData[removedBlock.row];
+        for (var i = 0; i < currentRowBlocks.length; i++) {
+            if (!currentRowBlocks[i].isRemoved) {
+                remainingCount++;
+            }
+        }
+        
+        if (remainingCount === 0) return true; // 整層空了必倒
+        
+        // 考量到塔變高了，把比較容易倒的範圍從 0~2 層微調到 0~3 層（中下層）
+        if (removedBlock.row <= 3 && Math.random() < 0.3) return true;
+        return Math.random() < 0.1;
+    }
+
+    resetGame();
+</script>
+
+</body>
+</html>
