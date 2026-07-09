@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地層疊疊樂 (Stratigraphy Jenga)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-bottom: 5px; color: #f1c40f; }
+        #game-container {
+            position: relative;
+            margin-top: 10px;
+        }
+        canvas {
+            background: #34495e;
+            border: 4px solid #bdc3c7;
+            border-radius: 8px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }
+        .info-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 400px;
+            margin-bottom: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            gap: 5px;
+        }
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+        #dice-panel {
+            font-size: 22px;
+            background: #1abc9c;
+            padding: 8px 15px;
+            border-radius: 5px;
+            color: #fff;
+            margin-top: 5px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        .controls {
+            margin-top: 15px;
+            text-align: center;
+            max-width: 500px;
+            font-size: 14px;
+            color: #bdc3c7;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        #btn-dice { background-color: #e67e22; }
+        #btn-dice:hover { background-color: #d35400; }
+        #btn-reset { background-color: #7f8c8d; }
+        #btn-reset:hover { background-color: #95a5a6; }
+    </style>
+</head>
+<body>
+
+    <h1>⏳ 岩層疊疊樂</h1>
+    <div style="margin-bottom: 15px; color: #ecf0f1;">由上至下分佈五類岩層，請依骰子指示抽取！</div>
+
+    <div class="info-panel">
+        <div class="status-row">
+            <div>得分 (已抽取): <span id="score">0</span></div>
+            <div>狀態: <span id="status" style="color: #2ecc71;">穩定</span></div>
+        </div>
+        <div id="dice-panel">🎲 請先擲骰子決定抽取岩層</div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="400" height="650"></canvas>
+    </div>
+
+    <div class="btn-group">
+        <button id="btn-dice" onclick="rollDice()">🎲 擲骰子抽岩層</button>
+        <button id="btn-reset" onclick="resetGame()">重新排列</button>
+    </div>
+
+    <div class="controls">
+        <p><strong>💡 玩法說明：</strong> 先點擊「擲骰子」按鈕，再點擊畫布中對應名稱的岩層方塊。抽走方塊後，系統會自動判定上方地層重心，若失去平衡就會引發大塌方！</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const statusEl = document.getElementById('status');
+        const dicePanelEl = document.getElementById('dice-panel');
+
+        const BLOCK_WIDTH = 80;
+        const BLOCK_HEIGHT = 35;
+        const BLOCKS_PER_ROW = 3;
+        const TOWER_START_X = 80; 
+        const TOWER_START_Y = 560; // 調整起點坐標，確保在畫布安全可見區域內
+
+        // 嚴格定義 5 類岩層（由上至下 0~4）
+        const LAYER_DEFINITIONS = [
+            { name: "人工層", color: "#95a5a6", pattern: "dot" },
+            { name: "四沉岩", color: "#9b59b6", pattern: "wave" },
+            { name: "新沉岩", color: "#3498db", pattern: "line" },
+            { name: "花崗岩", color: "#e74c3c", pattern: "grid" },
+            { name: "泥盆沉岩", color: "#f1c40f", pattern: "stripe" }
+        ];
+
+        // 5 層重複堆疊 3 輪，總共 15 層
+        const TOTAL_ROWS = 15; 
+
+        let blocks = [];
+        let score = 0;
+        let gameOver = false;
+        let targetLayer = null; 
+
+        class Block {
+            constructor(row, col) {
+                this.row = row; 
+                this.col = col; 
+                this.width = BLOCK_WIDTH;
+                this.height = BLOCK_HEIGHT;
+                this.isExtracted = false;
+                
+                // 修正層級與陣列索引的對應邏輯（底層 row 0 對應 泥盆沉岩 index 4）
+                let layerIndex = 4 - (row % 5);
+                this.type = LAYER_DEFINITIONS[layerIndex];
+
+                this.updatePosition();
+            }
+
+            updatePosition() {
+                this.x = TOWER_START_X + this.col * this.width; 
+                this.y = TOWER_START_Y - this.row * this.height;
+            }
+
+            draw() {
+                if (this.isExtracted) return;
+
+                // 1. 畫方塊主體
+                ctx.fillStyle = this.type.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                // 2. 畫邊框（目標層發白光外框）
+                if (targetLayer && this.type.name === targetLayer.name && !gameOver) {
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                } else {
+                    ctx.strokeStyle = '#2c3e50';
+                    ctx.lineWidth = 1.5;
+                }
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+                // 3. 繪製簡單地質紋理（使用最基本的 Canvas 畫線確保相容性）
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 1;
+                if (this.type.pattern === 'line') {
+                    ctx.beginPath();
+                    ctx.moveTo(this.x, this.y + 12); ctx.lineTo(this.x + this.width, this.y + 12);
+                    ctx.moveTo(this.x, this.y + 24); ctx.lineTo(this.x + this.width, this.y + 24);
+                    ctx.stroke();
+                } else if (this.type.pattern === 'wave') {
+                    ctx.beginPath();
+                    ctx.arc(this.x + 20, this.y + 20, 5, 0, Math.PI, true);
+                    ctx.arc(this.x + 50, this.y + 20, 5, 0, Math.PI, true);
+                    ctx.stroke();
+                } else if (this.type.pattern === 'dot') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(this.x + 20, this.y + 12, 3, 3);
+                    ctx.fillRect(this.x + 60, this.y + 22, 3, 3);
+                } else if (this.type.pattern === 'grid') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                    ctx.fillRect(this.x + 25, this.y + 5, 2, this.height - 10);
+                    ctx.fillRect(this.x + 55, this.y + 5, 2, this.height - 10);
+                } else if (this.type.pattern === 'stripe') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                    ctx.fillRect(this.x + 10, this.y, 15, this.height);
+                    ctx.fillRect(this.x + 50, this.y, 15, this.height);
+                }
+
+                // 4. 顯示岩層文字文字（移除陰影，加強字體相容）
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px "Microsoft JhengHei", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.type.name, this.x + this.width / 2, this.y + this.height / 2);
+            }
+
+            contains(mx, my) {
+                return !this.isExtracted && mx >= this.x && mx <= this.x + this.width && my >= this.y && my <= this.y + this.height;
+            }
+        }
+
+        function initGame() {
+            blocks = [];
+            score = 0;
+            gameOver = false;
+            targetLayer = null;
+            scoreEl.innerText = score;
+            statusEl.innerText = "穩定";
+            statusEl.style.color = "#2ecc71";
+            dicePanelEl.innerText = "🎲 請先擲骰子決定抽取岩層";
+            dicePanelEl.style.backgroundColor = "#1abc9c";
+
+            for (let r = 0; r < TOTAL_ROWS; r++) {
+                for (let c = 0; c < BLOCKS_PER_ROW; c++) {
+                    blocks.push(new Block(r, c));
+                }
+            }
+            draw();
+        }
+
+        function draw() {
+            // 清空畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 畫基底基岩地面
+            ctx.fillStyle = '#1a252f';
+            ctx.fillRect(0, TOWER_START_Y + BLOCK_HEIGHT, canvas.width, canvas.height);
+
+            // 畫所有地層
+            blocks.forEach(b => b.draw());
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#e74c3c';
+                ctx.font = 'bold 26px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('⚠️ 地層結構大崩塌！', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px Arial';
+                ctx.fillText(`最終成功抽取：${score} 個地層方塊`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+        }
+
+        function rollDice() {
+            if (gameOver) return;
+            const randomIndex = Math.floor(Math.random() * LAYER_DEFINITIONS.length);
+            targetLayer = LAYER_DEFINITIONS[randomIndex];
+            
+            dicePanelEl.innerText = `🎯 請抽取：${targetLayer.name}`;
+            dicePanelEl.style.backgroundColor = targetLayer.color;
+            draw(); // 刷新高亮外框
+        }
+
+        function checkStability() {
+            for (let r = 1; r < TOTAL_ROWS; r++) {
+                let currentLayer = blocks.filter(b => b.row === r && !b.isExtracted);
+                let baseLayer = blocks.filter(b => b.row === r - 1 && !b.isExtracted);
+                let higherLayerHasBlocks = blocks.some(b => b.row > r && !b.isExtracted);
+                
+                if (currentLayer.length === 0 && higherLayerHasBlocks) {
+                    return false;
+                }
+
+                if (currentLayer.length > 0) {
+                    if (baseLayer.length === 0) return false;
+
+                    let currentLayerCenterX = currentLayer.reduce((sum, b) => sum + (b.x + BLOCK_WIDTH/2), 0) / currentLayer.length;
+                    let baseMinX = Math.min(...baseLayer.map(b => b.x));
+                    let baseMaxX = Math.max(...baseLayer.map(b => b.x + BLOCK_WIDTH));
+
+                    const tolerance = 15; // 寬限卡位度
+
+                    if (currentLayerCenterX < (baseMinX - tolerance) || currentLayerCenterX > (baseMaxX + tolerance)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        canvas.addEventListener('click', function(e) {
+            if (gameOver) return;
+
+            if (!targetLayer) {
+                alert("請先擲骰子決定要抽取的岩層類型！");
+                return;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            for (let i = 0; i < blocks.length; i++) {
+                let b = blocks[i];
+                if (b.contains(mouseX, mouseY)) {
+                    
+                    if (b.type.name !== targetLayer.name) {
+                        alert(`抽錯啦！目前只能抽取【${targetLayer.name}】！`);
+                        return;
+                    }
+
+                    let maxCurrentRow = Math.max(...blocks.filter(bk => !bk.isExtracted).map(bk => bk.row));
+                    if (b.row === maxCurrentRow) {
+                        alert("不允許直接抽取最頂端的地層！");
+                        return;
+                    }
+
+                    b.isExtracted = true;
+                    score++;
+                    scoreEl.innerText = score;
+
+                    targetLayer = null;
+                    dicePanelEl.innerText = "🎲 請再次擲骰子！";
+                    dicePanelEl.style.backgroundColor = "#1abc9c";
+
+                    if (!checkStability()) {
+                        gameOver = true;
+                        statusEl.innerText = "已崩塌 (結構失穩)";
+                        statusEl.style.color = "#e74c3c";
+                    }
+                    
+                    draw();
+                    break;
+                }
+            }
+        });
+
+        function resetGame() {
+            initGame();
+        }
+
+        // 確保視窗完全加載後啟動
+        window.onload = function() {
+            initGame();
+        };
+    </script>
+</body>
+</html>
